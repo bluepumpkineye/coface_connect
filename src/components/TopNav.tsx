@@ -65,6 +65,11 @@ export function TopNav() {
               Working…
             </span>
           ) : null}
+          <span className="hidden text-[11px] text-navy-100/60 lg:inline">
+            Designed and built by{" "}
+            <span className="font-medium text-navy-100/85">Alexandre Lee</span>
+          </span>
+          <span className="hidden h-3.5 w-px bg-white/15 lg:block" />
           <div className="hidden items-center gap-2 text-[11px] text-navy-100/60 md:flex">
             <span className="h-1.5 w-1.5 rounded-full bg-brandteal" />
             {buyerCount > 0
