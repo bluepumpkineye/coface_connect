@@ -64,38 +64,38 @@ Single full-stack app — one repo, one deploy.
 | Framework  | **Next.js 16 (App Router) + React 19 + TypeScript**                     |
 | Styling    | **Tailwind CSS v4**                                                     |
 | Charts     | **Recharts** (scatter, bar, line)                                        |
-| Database   | **PostgreSQL via Drizzle ORM**                                           |
+| State      | **In-browser, persisted to localStorage** — no database                   |
 | File parse | **papaparse** (CSV) + **xlsx** (Excel), both client-side in the browser |
 | PDF export | **jsPDF + jspdf-autotable**, client-side                                  |
 | Auth       | None — single-user demo                                                  |
 
-**Why Next.js instead of Vite + Express?** One repo, one build, one deploy target, no CORS, and API
-routes live next to the code they serve. It deploys to Vercel as-is (or Render/Railway with
-`npm run build && npm run start`).
+**Why Next.js instead of Vite + Express?** One repo, one build, one deploy target, no CORS. It
+deploys to Vercel as-is (or Render/Railway with `npm run build && npm run start`).
 
-**Why Postgres instead of SQLite?** The sandbox this was built in provides a local Postgres, and a
-hosted Postgres is the only thing you need to provision on Vercel/Render/Railway. There is no other
-infrastructure — no Redis, no queue, no object store.
+**Why no database?** Every buyer in this demo is synthetic and generated deterministically from a
+seed, so there is nothing worth persisting that cannot be rebuilt instantly. The whole book lives
+in memory in the browser and is mirrored to localStorage, which makes the app fully static: no
+infrastructure to provision, no environment variables, no migrations, and nothing to fail at
+deploy time. Actions mutate that in-memory book directly, which is exactly what the interactivity
+pass calls for.
+
+The buyer, snapshot and alert shapes still live in `src/db/schema.ts` as plain TypeScript types, so
+putting a real database back in later means reimplementing a single module (`src/lib/portfolio.ts`)
+behind the same contract.
 
 ---
 
 ## Getting started
 
 ```bash
-# 1. Install
 npm install
-
-# 2. Point at a Postgres database
-echo 'DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/app_db' > .env
-
-# 3. Create the tables
-npm run db:push
-
-# 4. Run
 npm run dev          # http://localhost:3000
 ```
 
-Then click **“Load Demo Data”** on the landing screen. That single button:
+There is no database to set up and nothing to configure. A first visit generates the demo book
+automatically, so the dashboard is already populated when it loads. **“Regenerate Demo Data”**
+rebuilds it from a fresh seed, and **“Clear workspace”** empties it so the **“Load Demo Data”**
+onboarding flow can be shown live. That button:
 
 1. generates ~92 synthetic buyers (see below),
 2. scores every one of them,
@@ -245,8 +245,7 @@ src/
 │   ├── alerts/AlertsView.tsx       # Alerts page
 │   └── settings/ConnectedSystems.tsx
 ├── db/
-│   ├── index.ts                    # Drizzle client (pooled)
-│   └── schema.ts                   # buyers, portfolio_snapshots, alerts
+│   └── schema.ts                   # Buyer / snapshot / alert types (plain TS)
 └── lib/
     ├── risk/scoring.ts             # Simulated CUBE: weights, lookups, bands
     ├── risk/alerts.ts              # Rule engine + thresholds
@@ -264,11 +263,10 @@ src/
 ## Interactivity — actions that actually change the app
 
 Every action mutates real state and every dependent number, chart, badge and table row updates
-without a reload. The pattern is deliberately boring: **the `buyers` table in Postgres is the single
-source of truth**. A mutation calls an API route, which updates the row, re-runs the rule engine,
-and then recomputes the *entire* portfolio payload from the buyers array. The client just replaces
-its state with that payload. Nothing is derived on the client, so a stale number is structurally
-impossible.
+without a reload. The pattern is deliberately boring: **the in-memory buyer book is the single
+source of truth**. A mutation edits that book, re-runs the rule engine, then recomputes the
+*entire* portfolio payload from the buyers array, and the UI replaces its state with that payload.
+Nothing is derived anywhere else, so a stale number is structurally impossible.
 
 | Action | Where | Endpoint | Effect |
 | --- | --- | --- | --- |
@@ -352,23 +350,19 @@ sorted by risk score — with a "synthetic data / illustrative model" footer on 
 
 ## Deployment
 
-Single app — no separate backend to host.
+Every route is statically prerendered and there is no backend, no database and no environment
+variable to set.
 
-**Vercel**
+**Vercel** — import the repo and deploy. Nothing else to configure.
 
-1. Import the repo.
-2. Add a Postgres database (Vercel Postgres, Neon, Supabase…) and set `DATABASE_URL`.
-3. Run `npm run db:push` once against that database.
-4. Deploy. Everything else is automatic.
-
-**Render / Railway**
+**Render / Railway / any static host**
 
 - Build: `npm install && npm run build`
 - Start: `npm run start`
-- Attach a managed Postgres and set `DATABASE_URL`, then run the same `drizzle-kit push` once.
 
-`drizzle.config.ts` reads `DATABASE_URL` from the environment (loading `.env` in development), so
-`npm run db:push` targets whichever database that variable points at. Nothing secret is committed.
+Because the book is generated in the browser, every visitor gets their own independent copy of the
+demo and anything they change is local to them — one person clicking “Add to Policy” can never
+affect what anybody else sees.
 
 ---
 

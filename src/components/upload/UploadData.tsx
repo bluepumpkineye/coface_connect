@@ -132,7 +132,7 @@ export function UploadData() {
             accounts receivable file — every buyer, not just the insured ones. Supported formats:{" "}
             <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">.csv</code> and{" "}
             <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">.xlsx</code>. Parsing
-            happens in your browser; only the mapped rows are sent to the server.
+            and scoring happen entirely in your browser — your file never leaves this device.
           </p>
         </div>
         <Button variant="secondary" onClick={downloadTemplate}>

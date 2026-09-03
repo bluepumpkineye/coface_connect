@@ -1,14 +1,17 @@
-import { db } from "@/db";
-import {
-  alerts as alertsTable,
-  buyers as buyersTable,
-  portfolioSnapshots as portfolioSnapshotsTable,
-} from "@/db/schema";
-import type { Buyer } from "@/db/schema";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import type { AlertRecord, Buyer, PortfolioSnapshot } from "@/db/schema";
 import { generateDemoPortfolio } from "@/lib/demo/generator";
 import { computeThresholds, generateAlerts, type AlertType } from "@/lib/risk/alerts";
 import { bandFromScore, scorePortfolio, type RiskBand } from "@/lib/risk/scoring";
+
+/**
+ * The portfolio engine.
+ *
+ * This was a Postgres persistence layer; it is now a pure in-memory store that
+ * runs in the browser. The contract is deliberately unchanged: every mutation
+ * edits the buyer book, lets the rule engine re-run, then recomputes the whole
+ * payload from that single source of truth. Nothing is derived anywhere else,
+ * so a stale number remains structurally impossible.
+ */
 
 export type BandCount = {
   band: RiskBand;
@@ -78,6 +81,14 @@ export type PortfolioPayload = {
   resolvedAlerts: AlertRow[];
 };
 
+/** The whole book. Replaces the three database tables. */
+export type PortfolioState = {
+  buyers: Buyer[];
+  snapshots: PortfolioSnapshot[];
+  alerts: AlertRecord[];
+  nextAlertId: number;
+};
+
 const RISK_BAND_ORDER: RiskBand[] = ["Low", "Medium", "High", "Critical"];
 
 function avg(values: number[]): number {
@@ -90,149 +101,135 @@ function pct(value: number, total: number): number {
   return Math.round((value / total) * 1000) / 10;
 }
 
+export function emptyState(): PortfolioState {
+  return { buyers: [], snapshots: [], alerts: [], nextAlertId: 1 };
+}
+
 /** Recompute risk scores for the entire book (concentration needs the total). */
-export async function rescoreAll(): Promise<void> {
-  const rows = await db.select().from(buyersTable);
-  if (rows.length === 0) return;
-  const scored = scorePortfolio(rows);
+export function rescoreAll(state: PortfolioState): void {
+  if (state.buyers.length === 0) return;
+  const scored = scorePortfolio(state.buyers);
   for (const result of scored) {
-    const row = rows[result.index];
-    if (
-      row.riskScore === result.riskScore &&
-      row.riskBand === result.riskBand &&
-      row.scoreBreakdown?.payment === result.scoreBreakdown.payment &&
-      row.scoreBreakdown?.concentration === result.scoreBreakdown.concentration
-    ) {
-      continue;
-    }
-    await db
-      .update(buyersTable)
-      .set({
-        riskScore: result.riskScore,
-        riskBand: result.riskBand,
-        scoreBreakdown: result.scoreBreakdown,
-      })
-      .where(eq(buyersTable.id, row.id));
+    const row = state.buyers[result.index];
+    row.riskScore = result.riskScore;
+    row.riskBand = result.riskBand;
+    row.scoreBreakdown = result.scoreBreakdown;
   }
 }
 
 /**
  * Re-run the rule engine against the current book.
  *
- * Alerts are deleted and re-inserted, so resolution state is carried across on
- * the (buyer_id, type) key. An alert the user has dealt with stays dealt with.
+ * Alerts are rebuilt, so resolution state is carried across on the
+ * (buyerId, type) key. An alert the user has dealt with stays dealt with.
  */
-export async function regenerateAlerts(): Promise<void> {
-  const [rows, existing] = await Promise.all([
-    db.select().from(buyersTable).orderBy(asc(buyersTable.id)),
-    db
-      .select({
-        buyerId: alertsTable.buyerId,
-        type: alertsTable.type,
-        message: alertsTable.message,
-        resolvedAt: alertsTable.resolvedAt,
-      })
-      .from(alertsTable)
-      .where(eq(alertsTable.resolved, true)),
-  ]);
+export function regenerateAlerts(state: PortfolioState): void {
+  const ordered = [...state.buyers].sort((a, b) => a.id - b.id);
 
   const carried = new Map(
-    existing
-      .filter((row) => row.resolvedAt)
+    state.alerts
+      .filter((row) => row.resolved && row.resolvedAt)
       .map((row) => [
-        `${row.buyerId}:${row.type}`,
-        { resolvedAt: row.resolvedAt as Date, message: row.message },
+        row.buyerId + ":" + row.type,
+        { resolvedAt: row.resolvedAt as string, message: row.message },
       ]),
   );
 
-  const generated = generateAlerts(rows);
-
-  await db.delete(alertsTable);
+  const generated = generateAlerts(ordered);
+  const generatedKeys = new Set(generated.map((alert) => alert.buyerId + ":" + alert.type));
+  const buyerIds = new Set(ordered.map((row) => row.id));
+  const createdAt = new Date().toISOString();
 
   // Alerts the user has already actioned stay in the resolved list even when the
   // underlying rule no longer fires (e.g. the buyer has since been insured), so
   // the resolved view doubles as a record of what was done.
-  const stale: { buyerId: number; type: string; message: string; resolved: boolean; resolvedAt: Date | null }[] = [];
-  const generatedKeys = new Set(generated.map((alert) => `${alert.buyerId}:${alert.type}`));
-  const buyerIds = new Set(rows.map((row) => row.id));
+  const stale: AlertRecord[] = [];
   for (const [key, carriedRow] of carried) {
     if (generatedKeys.has(key)) continue;
-    const resolvedAt = carriedRow.resolvedAt;
-    const [buyerId, type] = key.split(":");
-    const parsedBuyerId = Number(buyerId);
+    const separator = key.indexOf(":");
+    const parsedBuyerId = Number(key.slice(0, separator));
+    const type = key.slice(separator + 1);
     if (!buyerIds.has(parsedBuyerId)) continue;
     stale.push({
+      id: state.nextAlertId++,
       buyerId: parsedBuyerId,
       type,
       message: carriedRow.message,
       resolved: true,
-      resolvedAt,
+      resolvedAt: carriedRow.resolvedAt,
+      createdAt,
     });
   }
 
-  const toInsert = [
+  state.alerts = [
     ...generated.map((alert) => {
-      const carriedRow = carried.get(`${alert.buyerId}:${alert.type}`);
+      const carriedRow = carried.get(alert.buyerId + ":" + alert.type);
       return {
-        ...alert,
+        id: state.nextAlertId++,
+        buyerId: alert.buyerId,
+        type: alert.type,
+        message: alert.message,
         resolved: Boolean(carriedRow),
         resolvedAt: carriedRow?.resolvedAt ?? null,
+        createdAt,
       };
     }),
     ...stale,
   ];
-
-  if (toInsert.length === 0) return;
-  await db.insert(alertsTable).values(toInsert);
 }
 
 /** Mark every OPEN alert on a buyer as resolved. Returns how many. */
-async function autoResolveBuyerAlerts(buyerId: number): Promise<number> {
-  const resolvedAt = new Date();
-  const updated = await db
-    .update(alertsTable)
-    .set({ resolved: true, resolvedAt })
-    .where(and(eq(alertsTable.buyerId, buyerId), eq(alertsTable.resolved, false)))
-    .returning({ id: alertsTable.id });
-  return updated.length;
+function autoResolveBuyerAlerts(state: PortfolioState, buyerId: number): number {
+  const resolvedAt = new Date().toISOString();
+  let count = 0;
+  for (const alert of state.alerts) {
+    if (alert.buyerId === buyerId && !alert.resolved) {
+      alert.resolved = true;
+      alert.resolvedAt = resolvedAt;
+      count += 1;
+    }
+  }
+  return count;
 }
 
-async function loadAlerts(): Promise<{ active: AlertRow[]; resolved: AlertRow[] }> {
-  const rows = await db
-    .select({
-      id: alertsTable.id,
-      buyerId: alertsTable.buyerId,
-      type: alertsTable.type,
-      message: alertsTable.message,
-      createdAt: alertsTable.createdAt,
-      resolved: alertsTable.resolved,
-      resolvedAt: alertsTable.resolvedAt,
-      buyerName: buyersTable.name,
-      country: buyersTable.country,
-      buyerExposure: buyersTable.outstandingAmount,
-      isInsured: buyersTable.isInsured,
-      riskScore: buyersTable.riskScore,
-      riskBand: buyersTable.riskBand,
-    })
-    .from(alertsTable)
-    .innerJoin(buyersTable, eq(alertsTable.buyerId, buyersTable.id))
-    .orderBy(desc(alertsTable.resolvedAt), desc(buyersTable.outstandingAmount))
-    .limit(400);
+function loadAlerts(state: PortfolioState): { active: AlertRow[]; resolved: AlertRow[] } {
+  const byId = new Map(state.buyers.map((buyer) => [buyer.id, buyer]));
 
-  const mapped: AlertRow[] = rows.map((row) => ({
-    id: row.id,
-    buyerId: row.buyerId,
-    buyerName: row.buyerName,
-    country: row.country,
-    buyerExposure: row.buyerExposure,
-    isInsured: row.isInsured,
-    riskScore: row.riskScore,
-    riskBand: row.riskBand as RiskBand,
-    type: row.type as AlertType,
-    message: row.message,
-    resolved: row.resolved,
-    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
-    createdAt: row.createdAt.toISOString(),
+  const joined = state.alerts
+    .map((alert) => {
+      const buyer = byId.get(alert.buyerId);
+      return buyer ? { alert, buyer } : null;
+    })
+    .filter((row): row is { alert: AlertRecord; buyer: Buyer } => row !== null);
+
+  // Matches the old ORDER BY resolved_at DESC, outstanding_amount DESC — in
+  // Postgres a DESC sort puts NULLs first, so open alerts lead the list.
+  joined.sort((a, b) => {
+    const aResolved = a.alert.resolvedAt;
+    const bResolved = b.alert.resolvedAt;
+    if (aResolved !== bResolved) {
+      if (!aResolved) return -1;
+      if (!bResolved) return 1;
+      if (aResolved > bResolved) return -1;
+      if (aResolved < bResolved) return 1;
+    }
+    return b.buyer.outstandingAmount - a.buyer.outstandingAmount;
+  });
+
+  const mapped: AlertRow[] = joined.slice(0, 400).map(({ alert, buyer }) => ({
+    id: alert.id,
+    buyerId: alert.buyerId,
+    buyerName: buyer.name,
+    country: buyer.country,
+    buyerExposure: buyer.outstandingAmount,
+    isInsured: buyer.isInsured,
+    riskScore: buyer.riskScore,
+    riskBand: buyer.riskBand as RiskBand,
+    type: alert.type as AlertType,
+    message: alert.message,
+    resolved: alert.resolved,
+    resolvedAt: alert.resolvedAt,
+    createdAt: alert.createdAt,
   }));
 
   return {
@@ -241,46 +238,37 @@ async function loadAlerts(): Promise<{ active: AlertRow[]; resolved: AlertRow[] 
   };
 }
 
-async function loadHistory(): Promise<HistoryPoint[]> {
-  const rows = await db.execute<{
-    snapshot_date: string;
-    insured: string;
-    avg_score: string;
-  }>(sql`
-    select s.snapshot_date,
-           b.is_insured as insured,
-           round(avg(s.risk_score))::int as avg_score
-    from portfolio_snapshots s
-    join buyers b on b.id = s.buyer_id
-    group by s.snapshot_date, b.is_insured
-    order by s.snapshot_date asc
-  `);
+function loadHistory(state: PortfolioState): HistoryPoint[] {
+  const insuredById = new Map(state.buyers.map((buyer) => [buyer.id, buyer.isInsured]));
 
-  const byDate = new Map<string, HistoryPoint>();
-  for (const row of rows.rows) {
-    const point = byDate.get(row.snapshot_date) ?? {
-      date: row.snapshot_date,
-      insuredAvg: 0,
-      uninsuredAvg: 0,
-      portfolioAvg: 0,
-    };
-    if (row.insured) point.insuredAvg = Number(row.avg_score);
-    else point.uninsuredAvg = Number(row.avg_score);
-    byDate.set(row.snapshot_date, point);
+  const buckets = new Map<string, { insured: number[]; uninsured: number[] }>();
+  for (const snapshot of state.snapshots) {
+    const isInsured = insuredById.get(snapshot.buyerId);
+    if (isInsured === undefined) continue;
+    const bucket = buckets.get(snapshot.snapshotDate) ?? { insured: [], uninsured: [] };
+    if (isInsured) bucket.insured.push(snapshot.riskScore);
+    else bucket.uninsured.push(snapshot.riskScore);
+    buckets.set(snapshot.snapshotDate, bucket);
   }
 
-  return Array.from(byDate.values()).map((point) => ({
-    ...point,
-    portfolioAvg: Math.round((point.insuredAvg + point.uninsuredAvg) / 2),
-  }));
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, bucket]) => {
+      const insuredAvg = avg(bucket.insured);
+      const uninsuredAvg = avg(bucket.uninsured);
+      return {
+        date,
+        insuredAvg,
+        uninsuredAvg,
+        portfolioAvg: Math.round((insuredAvg + uninsuredAvg) / 2),
+      };
+    });
 }
 
-export async function buildPortfolioPayload(): Promise<PortfolioPayload> {
-  const [rows, alertBundle, history] = await Promise.all([
-    db.select().from(buyersTable).orderBy(desc(buyersTable.outstandingAmount)),
-    loadAlerts(),
-    loadHistory(),
-  ]);
+export function buildPortfolioPayload(state: PortfolioState): PortfolioPayload {
+  const rows = [...state.buyers].sort((a, b) => b.outstandingAmount - a.outstandingAmount);
+  const alertBundle = loadAlerts(state);
+  const history = loadHistory(state);
 
   const alertRows = alertBundle.active;
 
@@ -328,7 +316,10 @@ export async function buildPortfolioPayload(): Promise<PortfolioPayload> {
     bandUninsured: bandFromScore(avgRiskUninsured),
     adverseSelectionGap: avgRiskInsured - avgRiskUninsured,
     missedOpportunityCount: missedOpportunity.length,
-    missedOpportunityExposure: missedOpportunity.reduce((sum, row) => sum + row.outstandingAmount, 0),
+    missedOpportunityExposure: missedOpportunity.reduce(
+      (sum, row) => sum + row.outstandingAmount,
+      0,
+    ),
     uninsuredHighRiskCount: uninsuredHighRisk.length,
     uninsuredHighRiskExposure: uninsuredHighRisk.reduce(
       (sum, row) => sum + row.outstandingAmount,
@@ -353,10 +344,10 @@ export async function buildPortfolioPayload(): Promise<PortfolioPayload> {
 /* ==========================================================================
    LIVE MUTATIONS
    --------------------------------------------------------------------------
-   Every mutation follows the same contract: change the buyers table, let the
+   Every mutation follows the same contract: change the buyer book, let the
    rule engine re-run, then recompute the whole portfolio payload from the
-   single source of truth. The client never derives anything itself, so no
-   stale number can survive anywhere in the UI.
+   single source of truth. The UI never derives anything itself, so no stale
+   number can survive anywhere.
    ========================================================================== */
 
 export type MutationOutcome = {
@@ -366,89 +357,105 @@ export type MutationOutcome = {
 
 /**
  * Improvement 1 — flip a buyer's insured status.
- * Risk scores are unaffected (they never read is_insured), but every aggregate,
+ * Risk scores are unaffected (they never read isInsured), but every aggregate,
  * chart and alert rule that does read it is recomputed.
  */
-export async function setBuyerInsured(
+export function setBuyerInsured(
+  state: PortfolioState,
   buyerId: number,
   insured: boolean,
-): Promise<MutationOutcome | null> {
-  const [buyer] = await db.select().from(buyersTable).where(eq(buyersTable.id, buyerId)).limit(1);
+): MutationOutcome | null {
+  const buyer = state.buyers.find((row) => row.id === buyerId);
   if (!buyer) return null;
   if (buyer.isInsured === insured) {
-    return { portfolio: await buildPortfolioPayload(), resolvedAlerts: 0 };
+    return { portfolio: buildPortfolioPayload(state), resolvedAlerts: 0 };
   }
 
-  await db.update(buyersTable).set({ isInsured: insured }).where(eq(buyersTable.id, buyerId));
+  buyer.isInsured = insured;
 
-  const resolvedAlerts = await autoResolveBuyerAlerts(buyerId);
-  await regenerateAlerts();
+  const resolvedAlerts = autoResolveBuyerAlerts(state, buyerId);
+  regenerateAlerts(state);
 
-  return { portfolio: await buildPortfolioPayload(), resolvedAlerts };
+  return { portfolio: buildPortfolioPayload(state), resolvedAlerts };
 }
 
 /** Improvement 2 — replace a buyer's in-force policy limit. */
-export async function setBuyerLimit(
+export function setBuyerLimit(
+  state: PortfolioState,
   buyerId: number,
   creditLimit: number,
-): Promise<MutationOutcome | null> {
-  const [buyer] = await db.select().from(buyersTable).where(eq(buyersTable.id, buyerId)).limit(1);
+): MutationOutcome | null {
+  const buyer = state.buyers.find((row) => row.id === buyerId);
   if (!buyer) return null;
 
   const nextLimit = Math.max(0, Math.round(creditLimit));
-  await db
-    .update(buyersTable)
-    .set({ creditLimitUsed: nextLimit })
-    .where(eq(buyersTable.id, buyerId));
+  const unchanged = nextLimit === buyer.creditLimitUsed;
+  buyer.creditLimitUsed = nextLimit;
 
-  const resolvedAlerts = nextLimit === buyer.creditLimitUsed ? 0 : await autoResolveBuyerAlerts(buyerId);
-  await regenerateAlerts();
+  const resolvedAlerts = unchanged ? 0 : autoResolveBuyerAlerts(state, buyerId);
+  regenerateAlerts(state);
 
-  return { portfolio: await buildPortfolioPayload(), resolvedAlerts };
+  return { portfolio: buildPortfolioPayload(state), resolvedAlerts };
 }
 
 /** Improvement 6 — dismiss a single alert. */
-export async function resolveAlertById(alertId: number): Promise<PortfolioPayload | null> {
-  const [alert] = await db.select().from(alertsTable).where(eq(alertsTable.id, alertId)).limit(1);
+export function resolveAlertById(
+  state: PortfolioState,
+  alertId: number,
+): PortfolioPayload | null {
+  const alert = state.alerts.find((row) => row.id === alertId);
   if (!alert) return null;
   if (!alert.resolved) {
-    await db
-      .update(alertsTable)
-      .set({ resolved: true, resolvedAt: new Date() })
-      .where(eq(alertsTable.id, alertId));
+    alert.resolved = true;
+    alert.resolvedAt = new Date().toISOString();
   }
-  return buildPortfolioPayload();
+  return buildPortfolioPayload(state);
 }
 
 /** Wipe and rebuild the synthetic demo book. */
-export async function loadDemoData(seed?: number): Promise<ReturnType<typeof generateDemoPortfolio>["stats"]> {
+export function loadDemoData(
+  state: PortfolioState,
+  seed?: number,
+): ReturnType<typeof generateDemoPortfolio>["stats"] {
   const generated = generateDemoPortfolio(92, seed);
+  const createdAt = new Date().toISOString();
 
-  await db.delete(alertsTable);
-  await db.delete(buyersTable);
+  state.buyers = generated.buyers.map((buyer, index) => ({
+    id: index + 1,
+    name: buyer.name,
+    country: buyer.country,
+    industry: buyer.industry,
+    outstandingAmount: buyer.outstandingAmount,
+    creditLimitUsed: buyer.creditLimitUsed ?? 0,
+    creditLimitRequested: buyer.creditLimitRequested ?? 0,
+    avgDaysLate: buyer.avgDaysLate ?? 0,
+    paymentTrend: buyer.paymentTrend ?? "stable",
+    isInsured: buyer.isInsured ?? false,
+    buyerSince: buyer.buyerSince,
+    riskScore: buyer.riskScore ?? 0,
+    riskBand: buyer.riskBand ?? "Low",
+    scoreBreakdown: buyer.scoreBreakdown ?? null,
+    createdAt,
+  }));
 
-  const inserted = await db.insert(buyersTable).values(generated.buyers).returning({ id: buyersTable.id });
-
-  const snapshotRows = generated.snapshots
+  state.snapshots = generated.snapshots
     .map((snapshot) => ({
-      buyerId: inserted[snapshot.buyerIndex]?.id,
+      buyerId: state.buyers[snapshot.buyerIndex]?.id,
       snapshotDate: snapshot.snapshotDate,
       riskScore: snapshot.riskScore,
     }))
-    .filter((row): row is { buyerId: number; snapshotDate: string; riskScore: number } =>
-      typeof row.buyerId === "number",
-    );
+    .filter((row): row is PortfolioSnapshot => typeof row.buyerId === "number");
 
-  for (let i = 0; i < snapshotRows.length; i += 400) {
-    await db.insert(portfolioSnapshotsTable).values(snapshotRows.slice(i, i + 400));
-  }
+  state.alerts = [];
+  state.nextAlertId = 1;
+  regenerateAlerts(state);
 
-  await regenerateAlerts();
   return generated.stats;
 }
 
-export async function resetPortfolio(): Promise<void> {
-  await db.delete(alertsTable);
-  await db.delete(portfolioSnapshotsTable);
-  await db.delete(buyersTable);
+export function resetPortfolio(state: PortfolioState): void {
+  state.buyers = [];
+  state.snapshots = [];
+  state.alerts = [];
+  state.nextAlertId = 1;
 }

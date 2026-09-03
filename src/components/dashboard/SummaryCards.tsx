@@ -4,32 +4,62 @@ import { useEffect, useRef, useState } from "react";
 import type { PortfolioSummary } from "@/lib/portfolio";
 import { BAND_ON_DARK, formatMoney, formatPct } from "@/lib/format";
 
-/** Smoothly animates between numeric values so mutations feel live. */
+/**
+ * Smoothly animates between numeric values so mutations feel live.
+ *
+ * The animation is an enhancement, never the source of truth: if frames never
+ * arrive — a backgrounded tab, a throttled renderer, reduced-motion — the value
+ * still snaps to the real figure. A summary card left showing a stale number
+ * after a mutation would undermine the whole dashboard.
+ */
 function useCountUp(value: number, duration = 480): number {
   const [display, setDisplay] = useState(value);
-  const fromRef = useRef(value);
+  const displayRef = useRef(value);
   const frameRef = useRef<number | null>(null);
+  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const from = fromRef.current;
+    // Resume from whatever is actually on screen, so an interrupted animation
+    // does not jump.
+    const from = displayRef.current;
     if (from === value) return;
+
+    const settle = () => {
+      displayRef.current = value;
+      setDisplay(value);
+    };
+
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (reduceMotion || typeof requestAnimationFrame !== "function") {
+      settle();
+      return;
+    }
+
     const start = performance.now();
 
     const step = (now: number) => {
       const progress = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
-      setDisplay(from + (value - from) * eased);
+      const next = from + (value - from) * eased;
+      displayRef.current = next;
+      setDisplay(next);
       if (progress < 1) {
         frameRef.current = requestAnimationFrame(step);
       } else {
-        fromRef.current = value;
+        settle();
       }
     };
 
     frameRef.current = requestAnimationFrame(step);
+    fallbackRef.current = setTimeout(settle, duration + 400);
+
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      fromRef.current = value;
+      if (fallbackRef.current !== null) clearTimeout(fallbackRef.current);
     };
   }, [value, duration]);
 

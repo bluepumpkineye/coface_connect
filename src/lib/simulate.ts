@@ -1,7 +1,4 @@
-import { db } from "@/db";
-import { buyers as buyersTable, portfolioSnapshots } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { regenerateAlerts, rescoreAll } from "@/lib/portfolio";
+import { regenerateAlerts, rescoreAll, type PortfolioState } from "@/lib/portfolio";
 
 /**
  * "Simulate Next Month" — a small random walk on payment behaviour, followed by
@@ -16,12 +13,12 @@ function randomStep(): number {
   return Math.round(gaussian + 1.2);
 }
 
-export async function simulateNextMonth(): Promise<{ month: string; changed: number }> {
-  const rows = await db.select().from(buyersTable);
-  if (rows.length === 0) return { month: new Date().toISOString().slice(0, 10), changed: 0 };
+export function simulateNextMonth(state: PortfolioState): { month: string; changed: number } {
+  const month = new Date().toISOString().slice(0, 10);
+  if (state.buyers.length === 0) return { month, changed: 0 };
 
   let changed = 0;
-  for (const row of rows) {
+  for (const row of state.buyers) {
     const step = randomStep();
     const nextDaysLate = Math.max(0, Math.min(150, row.avgDaysLate + step));
     let nextTrend = row.paymentTrend;
@@ -31,25 +28,22 @@ export async function simulateNextMonth(): Promise<{ month: string; changed: num
 
     if (nextDaysLate !== row.avgDaysLate || nextTrend !== row.paymentTrend) changed += 1;
 
-    await db
-      .update(buyersTable)
-      .set({ avgDaysLate: nextDaysLate, paymentTrend: nextTrend })
-      .where(eq(buyersTable.id, row.id));
+    row.avgDaysLate = nextDaysLate;
+    row.paymentTrend = nextTrend;
   }
 
-  await rescoreAll();
+  rescoreAll(state);
 
-  const scored = await db.select().from(buyersTable);
-  const month = new Date().toISOString().slice(0, 10);
-  const snapshotRows = scored.map((row) => ({
-    buyerId: row.id,
-    snapshotDate: month,
-    riskScore: row.riskScore,
-  }));
-  for (let i = 0; i < snapshotRows.length; i += 400) {
-    await db.insert(portfolioSnapshots).values(snapshotRows.slice(i, i + 400));
-  }
+  // Snapshots are written after scoring, so the trend chart picks up the new month.
+  state.snapshots = [
+    ...state.snapshots.filter((snapshot) => snapshot.snapshotDate !== month),
+    ...state.buyers.map((row) => ({
+      buyerId: row.id,
+      snapshotDate: month,
+      riskScore: row.riskScore,
+    })),
+  ];
 
-  await regenerateAlerts();
+  regenerateAlerts(state);
   return { month, changed };
 }

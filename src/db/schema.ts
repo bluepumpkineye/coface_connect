@@ -1,20 +1,14 @@
-import {
-  boolean,
-  date,
-  index,
-  integer,
-  jsonb,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-} from "drizzle-orm/pg-core";
-
 /**
- * Coface Connect — DEMO schema.
+ * Coface Connect — DEMO data model.
  *
  * Everything here is synthetic demo data. There is no connection to any real
  * Coface system, and none of these figures represent real companies.
+ *
+ * These were Drizzle/Postgres table definitions. The demo generates its whole
+ * book deterministically from a seed, so there is nothing worth persisting that
+ * cannot be rebuilt instantly — and a serverless host has no durable disk or
+ * database to persist it to anyway. They are now plain TypeScript types and the
+ * book lives in memory in the browser. The field names and shapes are unchanged.
  */
 
 export type ScoreBreakdown = {
@@ -28,73 +22,74 @@ export type ScoreBreakdown = {
   exposureShare: number;
 };
 
-export const buyers = pgTable(
-  "buyers",
-  {
-    id: serial("id").primaryKey(),
-    name: text("name").notNull(),
-    country: text("country").notNull(),
-    industry: text("industry").notNull(),
-    /** Outstanding AR balance, in whole USD. */
-    outstandingAmount: integer("outstanding_amount").notNull(),
-    creditLimitUsed: integer("credit_limit_used").notNull().default(0),
-    creditLimitRequested: integer("credit_limit_requested").notNull().default(0),
-    avgDaysLate: integer("avg_days_late").notNull().default(0),
-    /** improving | stable | worsening */
-    paymentTrend: text("payment_trend").notNull().default("stable"),
-    isInsured: boolean("is_insured").notNull().default(false),
-    buyerSince: date("buyer_since", { mode: "string" }).notNull(),
-    riskScore: integer("risk_score").notNull().default(0),
-    /** Low | Medium | High | Critical */
-    riskBand: text("risk_band").notNull().default("Low"),
-    scoreBreakdown: jsonb("score_breakdown").$type<ScoreBreakdown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    index("buyers_risk_score_idx").on(table.riskScore),
-    index("buyers_is_insured_idx").on(table.isInsured),
-  ],
-);
+export type Buyer = {
+  id: number;
+  name: string;
+  country: string;
+  industry: string;
+  /** Outstanding AR balance, in whole USD. */
+  outstandingAmount: number;
+  creditLimitUsed: number;
+  creditLimitRequested: number;
+  avgDaysLate: number;
+  /** improving | stable | worsening */
+  paymentTrend: string;
+  isInsured: boolean;
+  buyerSince: string;
+  riskScore: number;
+  /** Low | Medium | High | Critical */
+  riskBand: string;
+  scoreBreakdown: ScoreBreakdown | null;
+  /** ISO timestamp. */
+  createdAt: string;
+};
 
-export const portfolioSnapshots = pgTable(
-  "portfolio_snapshots",
-  {
-    id: serial("id").primaryKey(),
-    buyerId: integer("buyer_id")
-      .notNull()
-      .references(() => buyers.id, { onDelete: "cascade" }),
-    snapshotDate: date("snapshot_date", { mode: "string" }).notNull(),
-    riskScore: integer("risk_score").notNull(),
-  },
-  (table) => [index("snapshots_buyer_idx").on(table.buyerId, table.snapshotDate)],
-);
+/** Fields that previously carried a column default are optional here too. */
+export type NewBuyer = Omit<
+  Buyer,
+  | "id"
+  | "createdAt"
+  | "creditLimitUsed"
+  | "creditLimitRequested"
+  | "avgDaysLate"
+  | "paymentTrend"
+  | "isInsured"
+  | "riskScore"
+  | "riskBand"
+  | "scoreBreakdown"
+> & {
+  id?: number;
+  createdAt?: string;
+  creditLimitUsed?: number;
+  creditLimitRequested?: number;
+  avgDaysLate?: number;
+  paymentTrend?: string;
+  isInsured?: boolean;
+  riskScore?: number;
+  riskBand?: string;
+  scoreBreakdown?: ScoreBreakdown | null;
+};
 
-export const alerts = pgTable(
-  "alerts",
-  {
-    id: serial("id").primaryKey(),
-    buyerId: integer("buyer_id")
-      .notNull()
-      .references(() => buyers.id, { onDelete: "cascade" }),
-    /** upsell | deterioration | concentration */
-    type: text("type").notNull(),
-    message: text("message").notNull(),
-    /**
-     * User-dismissed alerts. Resolution is keyed on (buyer_id, type) and carried
-     * across regenerations so refreshing the ledger does not resurrect an alert
-     * somebody has already dealt with.
-     */
-    resolved: boolean("resolved").notNull().default(false),
-    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    index("alerts_buyer_idx").on(table.buyerId),
-    index("alerts_resolved_idx").on(table.resolved),
-  ],
-);
+export type PortfolioSnapshot = {
+  buyerId: number;
+  snapshotDate: string;
+  riskScore: number;
+};
 
-export type Buyer = typeof buyers.$inferSelect;
-export type NewBuyer = typeof buyers.$inferInsert;
-export type Alert = typeof alerts.$inferSelect;
-export type PortfolioSnapshot = typeof portfolioSnapshots.$inferSelect;
+export type AlertRecord = {
+  id: number;
+  buyerId: number;
+  /** upsell | deterioration | concentration */
+  type: string;
+  message: string;
+  /**
+   * User-dismissed alerts. Resolution is keyed on (buyerId, type) and carried
+   * across regenerations so refreshing the ledger does not resurrect an alert
+   * somebody has already dealt with.
+   */
+  resolved: boolean;
+  /** ISO timestamp. */
+  resolvedAt: string | null;
+  /** ISO timestamp. */
+  createdAt: string;
+};

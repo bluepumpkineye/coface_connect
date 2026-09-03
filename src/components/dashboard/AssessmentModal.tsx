@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AssessmentPayload, ClientBuyer } from "@/lib/types";
 import { BAND_COLORS, formatMoney, formatPct } from "@/lib/format";
+import { buildAssessment } from "@/lib/risk/assessment";
 import { Button, Spinner } from "@/components/ui";
 import { useStore } from "@/components/AppStore";
+
+/** Simulated underwriting turnaround, so the modal feels like real work. */
+const SIMULATED_PROCESSING_MS = 1500;
 
 const STAGES = [
   "Pulling ledger exposure…",
@@ -40,6 +44,15 @@ export function AssessmentModal({
 
   const isReassessment = buyer.isInsured;
 
+  // The assessment is computed once per buyer. Every dashboard mutation hands
+  // down a fresh buyer object, so depending on the object itself would restart
+  // the loading sequence each time; the ref keeps the latest fields without
+  // re-triggering the run.
+  const buyerRef = useRef(buyer);
+  useEffect(() => {
+    buyerRef.current = buyer;
+  }, [buyer]);
+
   useEffect(() => {
     let cancelled = false;
     const timer = setInterval(() => {
@@ -48,16 +61,16 @@ export function AssessmentModal({
 
     async function run() {
       try {
-        const response = await fetch("/api/assessment", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ buyerId: buyer.id }),
-        });
-        const text = await response.text();
-        const json = JSON.parse(text) as AssessmentPayload & { error?: string };
-        if (!response.ok) throw new Error(json.error ?? "Assessment failed");
+        // The delay is deliberate: it makes the demo *feel* like an underwriting
+        // engine doing work. The scoring itself is a transparent heuristic and
+        // runs instantly, right here in the browser.
+        await new Promise((resolve) => setTimeout(resolve, SIMULATED_PROCESSING_MS));
         if (cancelled) return;
-        setPayload(json);
+        const current = buyerRef.current;
+        setPayload({
+          assessment: buildAssessment(current),
+          buyer: { id: current.id, name: current.name, isInsured: current.isInsured },
+        });
         setPhase("done");
       } catch (caught) {
         if (cancelled) return;
