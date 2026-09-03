@@ -1,0 +1,169 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy-950: #050d1c;
+  --color-navy-900: #08172e;
+  --color-navy-800: #0d2340;
+  --color-navy-700: #143154;
+  --color-navy-600: #1c4272;
+  --color-navy-500: #27558f;
+  --color-navy-100: #dbe6f5;
+  --color-navy-50: #f1f6fc;
+
+  --color-brandteal: #0fb5a6;
+  --color-brandamber: #f0a41c;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+}
+
+/*
+ * Custom primitives live in the `components` layer so that any Tailwind
+ * utility (e.g. `bg-navy-900`) placed on the same element always wins.
+ * Declaring these outside a layer made them beat the utilities and produced
+ * white-on-white cards.
+ */
+@layer components {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: #f4f7fb;
+    color: #0d2340;
+  }
+
+  /* --- Shared surface primitives ----------------------------------------- */
+  .surface {
+    background-color: #ffffff;
+    border: 1px solid rgb(226 232 240);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  }
+
+  .surface-muted {
+    background-color: #f8fafc;
+    border: 1px solid rgb(226 232 240);
+    border-radius: 0.75rem;
+  }
+
+  .surface-navy {
+    background-color: var(--color-navy-900);
+    border: 1px solid rgb(5 13 28 / 0.4);
+    border-radius: 0.75rem;
+    color: #ffffff;
+  }
+
+  .label-xs {
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgb(100 116 139);
+  }
+
+  .numeric {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Subtle grid texture used behind hero panels */
+  .grid-texture {
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Scrollbars inside tables */
+  .thin-scroll::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .thin-scroll::-webkit-scrollbar-thumb {
+    background: rgb(203 213 225);
+    border-radius: 9999px;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@layer components {
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.55),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(15 181 166 / 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgb(15 181 166 / 0);
+  }
+}
+
+@layer components {
+  .chart-clickable {
+    cursor: pointer;
+    transition: transform 140ms ease-out;
+  }
+}
+
+.chart-clickable:hover {
+  transform: scale(1.015);
+}
+
+.tile-clickable {
+  cursor: pointer;
+  transition:
+    border-color 140ms ease-out,
+    box-shadow 140ms ease-out,
+    transform 140ms ease-out;
+}
+
+.tile-clickable:hover {
+  border-color: var(--color-navy-500);
+  box-shadow: 0 6px 18px rgb(13 35 64 / 0.12);
+  transform: translateY(-1px);
+}
+
+.tile-active {
+  border-color: var(--color-navy-700);
+  box-shadow: 0 0 0 2px rgb(20 49 84 / 0.16);
+}
