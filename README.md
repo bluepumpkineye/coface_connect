@@ -89,7 +89,7 @@ npm install
 echo 'DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/app_db' > .env
 
 # 3. Create the tables
-npx drizzle-kit push --config drizzle.config.json
+npm run db:push
 
 # 4. Run
 npm run dev          # http://localhost:3000
@@ -358,7 +358,7 @@ Single app — no separate backend to host.
 
 1. Import the repo.
 2. Add a Postgres database (Vercel Postgres, Neon, Supabase…) and set `DATABASE_URL`.
-3. Run `npx drizzle-kit push --config drizzle.config.json` once against that database.
+3. Run `npm run db:push` once against that database.
 4. Deploy. Everything else is automatic.
 
 **Render / Railway**
@@ -367,8 +367,8 @@ Single app — no separate backend to host.
 - Start: `npm run start`
 - Attach a managed Postgres and set `DATABASE_URL`, then run the same `drizzle-kit push` once.
 
-`drizzle.config.json` reads a hardcoded local URL by default — for a remote database, either edit it
-or export `DATABASE_URL` and switch the config to read it.
+`drizzle.config.ts` reads `DATABASE_URL` from the environment (loading `.env` in development), so
+`npm run db:push` targets whichever database that variable points at. Nothing secret is committed.
 
 ---
 
