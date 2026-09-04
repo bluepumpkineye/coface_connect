@@ -54,7 +54,16 @@ type StoreValue = {
 
 const StoreContext = createContext<StoreValue | null>(null);
 
-const STORAGE_KEY = "coface-connect:portfolio:v1";
+/**
+ * Bump the version whenever the stored shape gains a field, so a book saved by
+ * an older build is discarded rather than restored with holes in it. v1 books
+ * predate the policyholder and would come back labelled "Unnamed client"
+ * forever, since a saved book always wins over generating a fresh one.
+ *
+ * Discarding is safe here and nothing is lost that matters: the book is
+ * synthetic and regenerates from a seed on the next load.
+ */
+const STORAGE_KEY = "coface-connect:portfolio:v2";
 
 /**
  * The book lives in memory here in the browser and is mirrored to
@@ -62,9 +71,25 @@ const STORAGE_KEY = "coface-connect:portfolio:v1";
  * synthetic and generated from a seed, so there is nothing here worth putting
  * in a database — and a serverless host has no durable disk for one anyway.
  */
+const STORAGE_PREFIX = "coface-connect:portfolio:";
+
+/** Drop books written by superseded versions so they do not pile up. */
+function clearSupersededVersions(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const stale = Object.keys(window.localStorage).filter(
+      (key) => key.startsWith(STORAGE_PREFIX) && key !== STORAGE_KEY,
+    );
+    for (const key of stale) window.localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable — nothing to clean up.
+  }
+}
+
 function readPersisted(): PortfolioState | null {
   if (typeof window === "undefined") return null;
   try {
+    clearSupersededVersions();
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PortfolioState>;
