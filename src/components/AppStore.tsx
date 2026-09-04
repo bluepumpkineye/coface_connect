@@ -45,6 +45,7 @@ type StoreValue = {
   ingestRows: (
     rows: Record<string, unknown>[],
     replace: boolean,
+    clientName?: string,
   ) => Promise<IngestionSummary | null>;
   insureBuyer: (buyerId: number, insured: boolean) => Promise<PolicyActionOutcome>;
   updateBuyerLimit: (buyerId: number, creditLimit: number) => Promise<PolicyActionOutcome>;
@@ -69,6 +70,7 @@ function readPersisted(): PortfolioState | null {
     const parsed = JSON.parse(raw) as Partial<PortfolioState>;
     if (!Array.isArray(parsed.buyers) || !Array.isArray(parsed.alerts)) return null;
     return {
+      policyholder: parsed.policyholder ?? emptyState().policyholder,
       buyers: parsed.buyers,
       snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
       alerts: parsed.alerts,
@@ -180,11 +182,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [runAction]);
 
   const ingestRows = useCallback(
-    async (rows: Record<string, unknown>[], replace: boolean) => {
+    async (rows: Record<string, unknown>[], replace: boolean, clientName?: string) => {
       let summary: IngestionSummary | null = null;
       const ok = runAction("ingest", () => {
         try {
-          summary = ingestRowsInto(stateRef.current, rows, replace).ingestion;
+          summary = ingestRowsInto(stateRef.current, rows, replace, clientName).ingestion;
         } catch (caught) {
           throw caught instanceof IngestError ? caught : new Error("Ingestion failed");
         }

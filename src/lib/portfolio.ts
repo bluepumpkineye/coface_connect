@@ -1,5 +1,5 @@
-import type { AlertRecord, Buyer, PortfolioSnapshot } from "@/db/schema";
-import { generateDemoPortfolio } from "@/lib/demo/generator";
+import type { AlertRecord, Buyer, Policyholder, PortfolioSnapshot } from "@/db/schema";
+import { DEMO_POLICYHOLDER, generateDemoPortfolio } from "@/lib/demo/generator";
 import { computeThresholds, generateAlerts, type AlertType } from "@/lib/risk/alerts";
 import { bandFromScore, scorePortfolio, type RiskBand } from "@/lib/risk/scoring";
 
@@ -73,6 +73,8 @@ export type AlertRow = {
 };
 
 export type PortfolioPayload = {
+  /** Whose receivables ledger this is. */
+  policyholder: Policyholder;
   buyers: Buyer[];
   summary: PortfolioSummary;
   /** Open, un-actioned alerts. */
@@ -83,6 +85,7 @@ export type PortfolioPayload = {
 
 /** The whole book. Replaces the three database tables. */
 export type PortfolioState = {
+  policyholder: Policyholder;
   buyers: Buyer[];
   snapshots: PortfolioSnapshot[];
   alerts: AlertRecord[];
@@ -101,8 +104,23 @@ function pct(value: number, total: number): number {
   return Math.round((value / total) * 1000) / 10;
 }
 
+/** Shown before any ledger has been loaded. */
+export const UNNAMED_POLICYHOLDER: Policyholder = {
+  name: "Unnamed client",
+  country: "—",
+  industry: "—",
+  policyRef: "—",
+  clientSince: "",
+};
+
 export function emptyState(): PortfolioState {
-  return { buyers: [], snapshots: [], alerts: [], nextAlertId: 1 };
+  return {
+    policyholder: UNNAMED_POLICYHOLDER,
+    buyers: [],
+    snapshots: [],
+    alerts: [],
+    nextAlertId: 1,
+  };
 }
 
 /** Recompute risk scores for the entire book (concentration needs the total). */
@@ -334,6 +352,7 @@ export function buildPortfolioPayload(state: PortfolioState): PortfolioPayload {
   };
 
   return {
+    policyholder: state.policyholder,
     buyers: rows,
     summary,
     alerts: alertRows,
@@ -420,6 +439,8 @@ export function loadDemoData(
   const generated = generateDemoPortfolio(92, seed);
   const createdAt = new Date().toISOString();
 
+  state.policyholder = DEMO_POLICYHOLDER;
+
   state.buyers = generated.buyers.map((buyer, index) => ({
     id: index + 1,
     name: buyer.name,
@@ -454,6 +475,7 @@ export function loadDemoData(
 }
 
 export function resetPortfolio(state: PortfolioState): void {
+  state.policyholder = UNNAMED_POLICYHOLDER;
   state.buyers = [];
   state.snapshots = [];
   state.alerts = [];

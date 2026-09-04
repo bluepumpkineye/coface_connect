@@ -97,6 +97,19 @@ export function Dashboard() {
     return `${filter.bands[0]}:${filter.insured}`;
   }, [filter]);
 
+  /**
+   * An uploaded ledger only knows the client's name, so the country, sector and
+   * policy reference are placeholders. Show only what is actually known rather
+   * than a line of em dashes.
+   */
+  const policyholderMeta = useMemo(() => {
+    const client = data?.policyholder;
+    if (!client) return null;
+    const parts = [client.country, client.industry].filter((part) => part && part !== "—");
+    if (client.policyRef && client.policyRef !== "—") parts.push(`policy ${client.policyRef}`);
+    return parts.length > 0 ? parts.join(" · ") : null;
+  }, [data]);
+
   const activeDrillDown = useMemo<DrillDownKey | null>(() => {
     const entry = Object.entries(DRILL_DOWNS).find(
       ([, value]) => value.label !== null && value.label === filter.label,
@@ -131,11 +144,19 @@ export function Dashboard() {
     <div className="space-y-4">
       <div className="no-print flex flex-wrap items-center gap-2">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight text-navy-900">
-            Portfolio risk dashboard
-          </h1>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h1 className="text-lg font-semibold tracking-tight text-navy-900">
+              {data.policyholder.name}
+            </h1>
+            <span className="rounded-full bg-navy-900/5 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-navy-700 ring-1 ring-inset ring-navy-900/10">
+              Client
+            </span>
+          </div>
+          {policyholderMeta ? (
+            <p className="text-[12px] text-slate-500">{policyholderMeta}</p>
+          ) : null}
           <p className="text-[12px] text-slate-500">
-            Full-ledger view · updated{" "}
+            Full receivables ledger · updated{" "}
             {new Date(summary.generatedAt).toLocaleString("en-GB", {
               day: "2-digit",
               month: "short",
@@ -242,8 +263,8 @@ export function Dashboard() {
       <div ref={ledgerRef} className="scroll-mt-20">
         <Card>
           <CardHeader
-            title="Buyer ledger"
-            subtitle="Click a buyer name to expand the score breakdown · click a card or chart above to filter"
+            title={`Buyer ledger — ${data.policyholder.name}`}
+            subtitle="Every buyer owing this client money. Click a buyer name to expand the score breakdown · click a card or chart above to filter"
           />
           <BuyerTable
             key={`${filter.insured}|${filter.bands.join(",")}|${filter.label ?? ""}`}

@@ -1,4 +1,4 @@
-import type { NewBuyer } from "@/db/schema";
+import type { NewBuyer, Policyholder } from "@/db/schema";
 import { scorePortfolio } from "@/lib/risk/scoring";
 
 /**
@@ -407,3 +407,16 @@ export function generateDemoPortfolio(count = 92, seed = 20260215): GenerationRe
     },
   };
 }
+
+/**
+ * The demo policyholder — a Hong Kong exporter, matching the market this concept
+ * targets. Deliberately not built from the buyer name pools above, so it never
+ * reads as one of its own buyers.
+ */
+export const DEMO_POLICYHOLDER: Policyholder = {
+  name: "Cheung Kee Electronics (HK) Limited",
+  country: "Hong Kong SAR",
+  industry: "Electronics & Components",
+  policyRef: "CC-HK-2026-0184",
+  clientSince: "2019-03-01",
+};

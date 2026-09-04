@@ -30,6 +30,7 @@ export function UploadData() {
     Object.fromEntries(TEMPLATE_HEADERS.map((field) => [field, ""])) as Record<TemplateField, string>,
   );
   const [replace, setReplace] = useState(true);
+  const [clientName, setClientName] = useState("");
   const [parsing, setParsing] = useState(false);
   const [summary, setSummary] = useState<IngestionSummary | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -118,7 +119,7 @@ export function UploadData() {
 
   const runImport = async () => {
     if (!canImport) return;
-    const result = await ingestRows(mappedRows, replace);
+    const result = await ingestRows(mappedRows, replace, clientName);
     if (result) setSummary(result);
   };
 
@@ -317,6 +318,16 @@ export function UploadData() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
+            <label className="flex items-center gap-2 text-[12px] font-medium text-slate-700">
+              Client
+              <input
+                type="text"
+                value={clientName}
+                onChange={(event) => setClientName(event.target.value)}
+                placeholder="Whose ledger is this?"
+                className="w-56 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[12px] font-normal text-navy-900 placeholder:text-slate-400 focus:border-navy-700 focus:outline-none"
+              />
+            </label>
             <label className="flex items-center gap-2 text-[12px] font-medium text-slate-700">
               <input
                 type="checkbox"

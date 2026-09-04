@@ -93,3 +93,22 @@ export type AlertRecord = {
   /** ISO timestamp. */
   createdAt: string;
 };
+
+/**
+ * The insured party whose receivables ledger this is — Coface's customer, the
+ * supplier who buys the cover. Every buyer in the book is one of *their*
+ * customers.
+ *
+ * Called "Policyholder" in code rather than "Client" because `ClientBuyer`
+ * already means something unrelated here (the client-side buyer type). The UI
+ * says "client", which is the trade-credit term.
+ */
+export type Policyholder = {
+  name: string;
+  country: string;
+  industry: string;
+  /** Illustrative policy reference, shown on the dashboard and the report. */
+  policyRef: string;
+  /** ISO date the policy incepted. */
+  clientSince: string;
+};

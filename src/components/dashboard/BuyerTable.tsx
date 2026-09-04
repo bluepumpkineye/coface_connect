@@ -222,7 +222,7 @@ export function BuyerTable({
                             {buyer.name}
                           </span>
                           <span className="block text-[11px] text-slate-400">
-                            Client since {buyer.buyerSince}
+                            Buyer since {buyer.buyerSince}
                           </span>
                         </span>
                       </button>

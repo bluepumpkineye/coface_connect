@@ -28,14 +28,22 @@ export function ExportReport({ data }: { data: PortfolioData }) {
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(18);
-      doc.text("Coface Connect — Portfolio Risk Report", 40, 32);
+      doc.text("Coface Connect — Portfolio Risk Report", 40, 28);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(226, 236, 248);
+      doc.text(
+        `Client: ${data.policyholder.name} · ${data.policyholder.country} · policy ${data.policyholder.policyRef}`,
+        40,
+        44,
+      );
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(200, 214, 233);
       doc.text(
         `Generated ${now.toLocaleString("en-GB")} · ${summary.totalBuyers} buyers · ${formatMoney(summary.totalExposure)} outstanding · DEMO / SYNTHETIC DATA`,
         40,
-        50,
+        58,
       );
 
       // ---- Headline adverse selection stat ----
@@ -143,7 +151,11 @@ export function ExportReport({ data }: { data: PortfolioData }) {
         },
       });
 
-      doc.save(`coface-connect-portfolio-report-${now.toISOString().slice(0, 10)}.pdf`);
+      const clientSlug = data.policyholder.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      doc.save(`coface-connect-${clientSlug}-${now.toISOString().slice(0, 10)}.pdf`);
     } finally {
       setBusy(false);
     }

@@ -1,4 +1,4 @@
-import type { Buyer } from "@/db/schema";
+import type { Buyer, Policyholder } from "@/db/schema";
 import type { AlertRow, PortfolioSummary } from "@/lib/portfolio";
 import type { RiskBand } from "@/lib/risk/scoring";
 
@@ -9,6 +9,8 @@ import type { RiskBand } from "@/lib/risk/scoring";
 export type ClientBuyer = Omit<Buyer, "createdAt"> & { createdAt: string };
 
 export type PortfolioData = {
+  /** Whose receivables ledger this is. */
+  policyholder: Policyholder;
   buyers: ClientBuyer[];
   summary: PortfolioSummary;
   /** Open, un-actioned alerts. */

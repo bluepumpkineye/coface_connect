@@ -80,6 +80,7 @@ export function ingestRows(
   state: PortfolioState,
   rawRows: IngestRow[],
   replace: boolean,
+  clientName?: string,
 ): IngestResult {
   const rows = (Array.isArray(rawRows) ? rawRows : []).map(normaliseRow);
   if (rows.length === 0) throw new IngestError("No rows supplied");
@@ -121,6 +122,20 @@ export function ingestRows(
     throw new IngestError(
       "No valid rows — every row needs a buyer name and an outstanding amount.",
     );
+  }
+
+  // An uploaded ledger belongs to whoever the user names, so the rest of the
+  // demo policyholder is cleared rather than inherited — otherwise the upload
+  // would carry the demo country and policy reference under a new name.
+  const trimmedClient = clientName?.trim();
+  if (trimmedClient) {
+    state.policyholder = {
+      name: trimmedClient,
+      country: "—",
+      industry: "—",
+      policyRef: "—",
+      clientSince: "",
+    };
   }
 
   if (replace) {
